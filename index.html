@@ -465,32 +465,28 @@ window.showToast=(msg,type='')=>{
   clearTimeout(_tt);_tt=setTimeout(()=>{t.className='toast'},2800);
 };
 
-function loadCfg(){try{return JSON.parse(localStorage.getItem('nv_cfg')||'null')}catch{return null}}
-window.saveConfig=()=>{
-  const cfg={apiKey:$('c-key').value.trim(),authDomain:$('c-domain').value.trim(),projectId:$('c-pid').value.trim(),appId:$('c-appid').value.trim(),adminEmail:$('c-admin').value.trim().toLowerCase()};
-  const e=$('serr');
-  if(!cfg.apiKey||!cfg.authDomain||!cfg.projectId||!cfg.appId){e.textContent='Please fill in all four Firebase config fields.';e.style.display='block';return}
-  if(!cfg.adminEmail){e.textContent='Please enter your admin email.';e.style.display='block';return}
-  e.style.display='none';localStorage.setItem('nv_cfg',JSON.stringify(cfg));location.reload();
+/* ── HARDCODED CONFIG — no setup screen needed ── */
+const cfg={
+  apiKey:      "AIzaSyAVw94ONvI23BHZPcDtQ7PP-wfbaDqPJlM",
+  authDomain:  "notevault-2d047.firebaseapp.com",
+  projectId:   "notevault-2d047",
+  appId:       "1:21477734430:web:db9ebf5ac897de73b0d60f",
+  adminEmail:  "souravdas2252@gmail.com",
 };
 
-const cfg=loadCfg();
 const ldr=$('loader');
-if(!cfg){ldr.classList.add('fade');setTimeout(()=>{hide('loader');show('setup')},400)}
-else{
-  const app=initializeApp({apiKey:cfg.apiKey,authDomain:cfg.authDomain,projectId:cfg.projectId,appId:cfg.appId});
-  const auth=getAuth(app),db=getFirestore(app);
-  window._auth=auth;window._db=db;window._cfg=cfg;
-  if(cfg.adminEmail){$('ahintval').textContent=cfg.adminEmail;show('ahint')}
-  onAuthStateChanged(auth,user=>{
-    if(user){
-      const isAdmin=user.email?.toLowerCase()===cfg.adminEmail;
-      window._user=user;window._isAdmin=isAdmin;
-      ldr.classList.add('fade');
-      setTimeout(()=>{hide('loader');hide('auth');show('app','block');bootApp(user,isAdmin,db)},300);
-    }else{ldr.classList.add('fade');setTimeout(()=>{hide('loader');show('auth')},300)}
-  });
-}
+const app=initializeApp({apiKey:cfg.apiKey,authDomain:cfg.authDomain,projectId:cfg.projectId,appId:cfg.appId});
+const auth=getAuth(app),db=getFirestore(app);
+window._auth=auth;window._db=db;window._cfg=cfg;
+$('ahintval').textContent=cfg.adminEmail;show('ahint');
+onAuthStateChanged(auth,user=>{
+  if(user){
+    const isAdmin=user.email?.toLowerCase()===cfg.adminEmail;
+    window._user=user;window._isAdmin=isAdmin;
+    ldr.classList.add('fade');
+    setTimeout(()=>{hide('loader');hide('auth');show('app','block');bootApp(user,isAdmin,db)},300);
+  }else{ldr.classList.add('fade');setTimeout(()=>{hide('loader');show('auth')},300)}
+});
 
 window.switchTab=tab=>{
   document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register')));
