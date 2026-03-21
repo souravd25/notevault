@@ -245,8 +245,10 @@ textarea{resize:vertical;min-height:80px;line-height:1.5}
       <button class="sbbtn" onclick="setSem('Semester 6')" data-sem="Semester 6">Semester 6 <span class="sbcnt" id="sc-S6">0</span></button>
       <button class="sbbtn" onclick="setSem('Semester 7')" data-sem="Semester 7">Semester 7 <span class="sbcnt" id="sc-S7">0</span></button>
       <button class="sbbtn" onclick="setSem('Semester 8')" data-sem="Semester 8">Semester 8 <span class="sbcnt" id="sc-S8">0</span></button>
-      <div class="sblabel mt">Who's Online</div>
-      <div id="mlist"><p style="font-size:12px;color:var(--t3);padding:0 8px">Loading…</p></div>
+      <div class="sblabel mt">Online Now <span id="online-now-cnt" style="font-size:10px;background:#3d9e6a;color:#fff;padding:1px 6px;border-radius:999px;margin-left:4px;font-weight:500">0</span></div>
+      <div id="mlist-online"><p style="font-size:12px;color:var(--t3);padding:0 8px">Nobody online yet</p></div>
+      <div class="sblabel mt" id="offline-label" style="display:none">Recently Seen</div>
+      <div id="mlist-offline"></div>
     </aside>
     <main class="content">
       <div id="upload-trigger">
@@ -363,30 +365,77 @@ async function bootApp(user,isAdmin,db){
   if(isAdmin){show('abadge','inline-block');show('upload-trigger','block');show('ann-trigger','block')}
   await markOn(db,user);
   window.addEventListener('beforeunload',()=>markOff(db,user.uid));
-  window._pi=setInterval(()=>markOn(db,user),20000);
+  window._pi=setInterval(()=>markOn(db,user),30000);
   window._unsub=onSnapshot(collection(db,'presence'),snap=>{
     const ms=[];snap.forEach(d=>ms.push({id:d.id,...d.data()}));
+    window._lastPresenceSnap=ms;
     renderMembers(ms,user.uid);
-    $('online-count').textContent=ms.filter(m=>m.online).length;
   });
   const annQ=query(collection(db,'announcements'),orderBy('createdAt','desc'));
   window._unsubAnn=onSnapshot(annQ,snap=>{const anns=[];snap.forEach(d=>anns.push({id:d.id,...d.data()}));renderAnnouncements(anns)});
   const nQ=query(collection(db,'notes'),orderBy('createdAt','desc'));
   onSnapshot(nQ,snap=>{allNotes=[];snap.forEach(d=>allNotes.push({id:d.id,...d.data()}));updateCounts();renderNotes()});
-  setInterval(()=>{document.querySelectorAll('.mlast[data-ts]').forEach(el=>{const ts=parseInt(el.dataset.ts);if(!ts)return;const diff=Math.floor((Date.now()-ts)/1000);el.textContent=diff<10?'just now':diff<60?diff+'s ago':diff<3600?Math.floor(diff/60)+'m ago':diff<86400?Math.floor(diff/3600)+'h ago':'a while ago'})},15000);
+  // Re-render presence every 30s so stale users drop off the Online Now list
+  setInterval(()=>{
+    const cached=window._lastPresenceSnap;
+    if(cached) renderMembers(cached, user.uid);
+    // Also refresh last-seen text
+    document.querySelectorAll('.mlast[data-ts]').forEach(el=>{
+      const ts=parseInt(el.dataset.ts);if(!ts)return;
+      const diff=Math.floor((Date.now()-ts)/1000);
+      el.textContent=diff<10?'just now':diff<60?diff+'s ago':diff<3600?Math.floor(diff/60)+'m ago':diff<86400?Math.floor(diff/3600)+'h ago':'a while ago';
+    });
+  },15000);
 }
 
-function renderMembers(ms,uid){
-  const el=$('mlist');
-  if(!ms.length){el.innerHTML='<p style="font-size:12px;color:var(--t3);padding:0 8px">No members yet</p>';return}
-  const sorted=[...ms].sort((a,b)=>{if(a.online&&!b.online)return-1;if(!a.online&&b.online)return 1;return(b.lastSeen?.toMillis?.()||0)-(a.lastSeen?.toMillis?.()||0)});
-  el.innerHTML=sorted.map(m=>{
-    const isMe=m.id===uid;
-    const ph=m.photo?`<div class="mav"><img src="${m.photo}" alt=""/></div>`:`<div class="mav">${(m.name||'?').charAt(0).toUpperCase()}</div>`;
-    const tsMs=m.lastSeen?.toMillis?.()||0;
-    const status=m.online?`<span class="monline">&#9679; online now</span>`:`<span class="mlast" data-ts="${tsMs}">Last seen ${relTime(m.lastSeen)}</span>`;
-    return`<div class="mrow"><span class="odot ${m.online?'on':'off'}"></span>${ph}<div class="minfo"><div class="mname">${m.name||'User'}${isMe?' (you)':''}</div>${status}</div></div>`;
-  }).join('');
+/* HEARTBEAT THRESHOLD: 2 minutes = 120000ms */
+const ONLINE_THRESHOLD = 120000;
+function isReallyOnline(m){
+  if(!m.online) return false;
+  const ts = m.lastSeen?.toMillis?.() || 0;
+  return ts > 0 && (Date.now() - ts) < ONLINE_THRESHOLD;
+}
+function memberRow(m, uid, showStatus){
+  const isMe = m.id === uid;
+  const ph = m.photo
+    ? `<div class="mav"><img src="${m.photo}" alt=""/></div>`
+    : `<div class="mav">${(m.name||'?').charAt(0).toUpperCase()}</div>`;
+  const tsMs = m.lastSeen?.toMillis?.() || 0;
+  const status = showStatus
+    ? `<span class="monline">&#9679; active now</span>`
+    : `<span class="mlast" data-ts="${tsMs}">Last seen ${relTime(m.lastSeen)}</span>`;
+  return `<div class="mrow"><span class="odot ${showStatus?'on':'off'}"></span>${ph}<div class="minfo"><div class="mname">${m.name||'User'}${isMe?' (you)':''}</div>${status}</div></div>`;
+}
+function renderMembers(ms, uid){
+  const online = ms.filter(m => isReallyOnline(m))
+    .sort((a,b) => (b.lastSeen?.toMillis?.()||0) - (a.lastSeen?.toMillis?.()||0));
+  const offline = ms.filter(m => !isReallyOnline(m) && m.lastSeen)
+    .sort((a,b) => (b.lastSeen?.toMillis?.()||0) - (a.lastSeen?.toMillis?.()||0))
+    .slice(0, 8); // show last 8 offline members
+
+  // Update online count badge in topbar + sidebar
+  const onlineCount = online.length;
+  const onlineCntEl = document.getElementById('online-count');
+  const onlineNowCnt = document.getElementById('online-now-cnt');
+  if(onlineCntEl) onlineCntEl.textContent = onlineCount;
+  if(onlineNowCnt) onlineNowCnt.textContent = onlineCount;
+
+  // Render online section
+  const elOn = document.getElementById('mlist-online');
+  elOn.innerHTML = online.length
+    ? online.map(m => memberRow(m, uid, true)).join('')
+    : '<p style="font-size:12px;color:var(--t3);padding:0 8px">Nobody online right now</p>';
+
+  // Render offline section
+  const elOff = document.getElementById('mlist-offline');
+  const offLabel = document.getElementById('offline-label');
+  if(offline.length){
+    offLabel.style.display = '';
+    elOff.innerHTML = offline.map(m => memberRow(m, uid, false)).join('');
+  } else {
+    offLabel.style.display = 'none';
+    elOff.innerHTML = '';
+  }
 }
 
 let annPanelOpen=false;
